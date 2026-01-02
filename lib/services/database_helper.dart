@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
@@ -581,6 +582,83 @@ class DatabaseHelper {
   Future<Contact> getRandomContact() async {
     final contacts = await getRandomContacts(1);
     return contacts.isNotEmpty ? contacts.first : throw Exception('No active contacts found');
+  }
+
+  // Priority-based random selection
+  Future<Contact> getRandomContactWithPriority() async {
+    final db = await instance.database;
+    final now = DateTime.now();
+    final nowString = now.toIso8601String();
+    
+    // Get all active contacts with their priority scores
+    final result = await db.rawQuery('''
+      SELECT 
+        c.*,
+        CASE 
+          WHEN c.is_favorite = 1 AND c.favorite_frequency IS NOT NULL THEN
+            CASE 
+              WHEN c.last_called IS NULL THEN 100
+              ELSE 
+                CASE c.favorite_frequency
+                  WHEN 'daily' THEN 
+                    CASE 
+                      WHEN (julianday('$nowString') - julianday(c.last_called)) * 20 > 100 THEN 0
+                      ELSE 100 - (julianday('$nowString') - julianday(c.last_called)) * 20
+                    END
+                  WHEN 'weekly' THEN 
+                    CASE 
+                      WHEN (julianday('$nowString') - julianday(c.last_called)) * 10 > 100 THEN 0
+                      ELSE 100 - (julianday('$nowString') - julianday(c.last_called)) * 10
+                    END
+                  WHEN 'monthly' THEN 
+                    CASE 
+                      WHEN (julianday('$nowString') - julianday(c.last_called)) * 5 > 100 THEN 0
+                      ELSE 100 - (julianday('$nowString') - julianday(c.last_called)) * 5
+                    END
+                  ELSE 50
+                END
+            END
+          WHEN c.is_favorite = 1 THEN 75
+          WHEN c.last_called IS NULL THEN 60
+          ELSE 
+            CASE 
+              WHEN (julianday('$nowString') - julianday(c.last_called)) * 2 > 50 THEN 0
+              ELSE 50 - (julianday('$nowString') - julianday(c.last_called)) * 2
+            END
+        END as priority_score
+      FROM contacts c
+      WHERE c.is_active = 1
+      ORDER BY RANDOM()
+    ''');
+    
+    if (result.isEmpty) {
+      throw Exception('No active contacts found');
+    }
+    
+    // Weighted random selection based on priority scores
+    final contactsWithScores = result.map((row) {
+      final contact = Contact.fromMap(row);
+      final score = (row['priority_score'] as num).toDouble();
+      return MapEntry(contact, score);
+    }).toList();
+    
+    // Calculate total score
+    final totalScore = contactsWithScores.fold<double>(0, (sum, entry) => sum + entry.value);
+    
+    // Generate random number between 0 and totalScore
+    final random = Random().nextDouble() * totalScore;
+    
+    // Select contact based on weighted random
+    double currentScore = 0;
+    for (final entry in contactsWithScores) {
+      currentScore += entry.value;
+      if (random <= currentScore) {
+        return entry.key;
+      }
+    }
+    
+    // Fallback to first contact
+    return contactsWithScores.first.key;
   }
 
   Future close() async {

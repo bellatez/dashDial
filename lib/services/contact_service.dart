@@ -77,7 +77,7 @@ class ContactService {
   }
 
   Future<Contact> getRandomContact() async {
-    return await _dbHelper.getRandomContact();
+    return await _dbHelper.getRandomContactWithPriority();
   }
 
   Future<void> updateContact(Contact contact) async {

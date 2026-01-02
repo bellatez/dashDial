@@ -539,6 +539,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           Expanded(
             child: ElevatedButton(
               onPressed: _canProceed() ? _proceed : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange.shade600,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 2,
+              ),
               child: Text(_currentStep == 2 ? 'Get Started' : 'Continue'),
             ),
           ),
