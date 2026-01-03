@@ -16,6 +16,7 @@ class OnboardingScreen extends StatefulWidget {
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
   final PageController _pageController = PageController();
+  final TextEditingController _goalController = TextEditingController(text: '1');
   
   int _currentStep = 0;
   CallFrequency? _selectedFrequency;
@@ -28,6 +29,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void dispose() {
     _pageController.dispose();
+    _goalController.dispose();
     super.dispose();
   }
 
@@ -113,7 +115,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 32),
           
           Text(
-            'Welcome to DashDial',
+            'Welcome to dashDial',
             style: Theme.of(context).textTheme.headlineLarge?.copyWith(
               fontWeight: FontWeight.bold,
             ),
@@ -267,6 +269,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           inputFormatters: [
                             FilteringTextInputFormatter.digitsOnly,
                           ],
+                          controller: _goalController,
                           decoration: InputDecoration(
                             labelText: 'Goal per ${_selectedFrequency!.name}',
                             hintText: 'Enter your goal',
@@ -305,6 +308,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       onTap: () {
         setState(() {
           _selectedFrequency = frequency;
+          // Reset goal when frequency changes
+          _frequencyGoal = 1;
+          _goalController.text = '1';
         });
       },
       child: Container(
@@ -382,7 +388,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 16),
           
           Text(
-            'DashDial needs access to your contacts to help you stay connected with people who matter most.',
+            'dashDial needs access to your contacts to help you stay connected with people who matter most.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               color: Colors.grey.shade700,
@@ -499,7 +505,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'DashDial will never shame you for missing a call.',
+                  'dashDial will never shame you for missing a call.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: Colors.green.shade700,
@@ -563,7 +569,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       case 1:
         return _selectedFrequency != null && _frequencyGoal > 0;
       case 2:
-        return _permissionGranted; // Must have permission to proceed
+        return true; // Allow proceeding, permission will be requested in _proceed()
       default:
         return false;
     }
@@ -575,18 +581,25 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
       );
-    } else {
-      // Complete onboarding
-      await _completeOnboarding();
+    } else if (_currentStep == 2) {
+      // Check if permission is granted, if not, request it
+      if (!_permissionGranted) {
+        await _requestContactPermission(completeOnboardingAfter: true);
+      } else {
+        // Permission already granted, complete onboarding
+        await _completeOnboarding();
+      }
     }
   }
 
-  Future<void> _requestContactPermission() async {
+  Future<void> _requestContactPermission({bool completeOnboardingAfter = false}) async {
     final status = await Permission.contacts.request();
     
-    setState(() {
-      _permissionGranted = status.isGranted;
-    });
+    if (mounted) {
+      setState(() {
+        _permissionGranted = status.isGranted;
+      });
+    }
 
     if (status.isPermanentlyDenied) {
       if (mounted) {
@@ -595,7 +608,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           builder: (context) => AlertDialog(
             title: const Text('Permission Required'),
             content: const Text(
-              'DashDial needs contact access to help you stay connected. Please enable it in your device settings.',
+              'dashDial needs contact access to help you stay connected. Please enable it in your device settings.',
             ),
             actions: [
               TextButton(
@@ -616,10 +629,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     } else if (status.isGranted) {
       // Automatically import contacts after permission is granted
       await _importContacts();
+      
+      // If this was triggered by continue button, complete onboarding
+      if (completeOnboardingAfter) {
+        await _completeOnboarding();
+      }
     } else if (!status.isGranted) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Contact permission is required to use DashDial')),
+          const SnackBar(content: Text('Contact permission is required to use dashDial')),
         );
       }
     }
@@ -630,6 +648,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       return;
     }
 
+    if (!mounted) return;
     setState(() {
       _isImportingContacts = true;
     });
@@ -663,10 +682,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         }
       }
 
-      setState(() {
-        _isImportingContacts = false;
-        _importedContactsCount = importedCount;
-      });
+      if (mounted) {
+        setState(() {
+          _isImportingContacts = false;
+          _importedContactsCount = importedCount;
+        });
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -677,9 +698,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         );
       }
     } catch (e) {
-      setState(() {
-        _isImportingContacts = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isImportingContacts = false;
+        });
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -699,15 +722,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     try {
       // Save frequency and goal
-      if (_selectedFrequency != null) {
+      if (_selectedFrequency != null && _frequencyGoal > 0) {
         await _dbHelper.updateSetting('call_frequency', _selectedFrequency!.name);
         
         // Save the user-defined goal
-        await _dbHelper.updateSetting('${_selectedFrequency!.name}_goal', _frequencyGoal.toString());
+        final goalKey = '${_selectedFrequency!.name}_goal';
+        await _dbHelper.updateSetting(goalKey, _frequencyGoal.toString());
+        
+        // Wait a bit to ensure database transaction is committed
+        await Future.delayed(const Duration(milliseconds: 100));
+        
+        // Verify the settings were saved
+        final savedFrequency = await _dbHelper.getSetting('call_frequency');
+        final savedGoal = await _dbHelper.getSetting(goalKey);
+      } else {
+        // Set defaults if not properly set
+        if (_selectedFrequency == null) {
+          await _dbHelper.updateSetting('call_frequency', 'weekly');
+        }
+        if (_frequencyGoal <= 0) {
+          await _dbHelper.updateSetting('weekly_goal', '1');
+        }
       }
       
       // Mark onboarding as complete
       await _dbHelper.updateSetting('onboarding_complete', 'true');
+      
+      // Wait a bit more to ensure all settings are committed
+      await Future.delayed(const Duration(milliseconds: 200));
       
       if (mounted) {
         Navigator.of(context).pushReplacement(

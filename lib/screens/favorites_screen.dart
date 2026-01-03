@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart' as fc;
 import '../models/contact.dart';
 import '../services/database_helper.dart';
+import '../services/notification_service.dart';
 
 class FavoritesScreen extends StatefulWidget {
   const FavoritesScreen({super.key});
@@ -12,6 +13,7 @@ class FavoritesScreen extends StatefulWidget {
 
 class _FavoritesScreenState extends State<FavoritesScreen> {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
+  final NotificationService _notificationService = NotificationService();
   List<Contact> _allContacts = [];
   List<Contact> _filteredContacts = [];
   bool _isLoading = true;
@@ -101,6 +103,11 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
       await _dbHelper.updateContact(updatedContact);
       
+      // If setting as favorite, request notification permission
+      if (updatedContact.isFavorite) {
+        await _notificationService.requestNotificationPermission();
+      }
+      
       // Update local state
       setState(() {
         final index = _allContacts.indexWhere((c) => c.id == contact.id);
@@ -115,18 +122,24 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           return name.contains(query);
         }).toList();
         
-        final favorites = allFilteredContacts.where((c) => c.isFavorite).toList();
-        final nonFavorites = allFilteredContacts.where((c) => !c.isFavorite).toList();
-        _filteredContacts = [...favorites, ...nonFavorites];
+        // Sort: favorites first, then alphabetically
+        allFilteredContacts.sort((a, b) {
+          if (a.isFavorite && !b.isFavorite) return -1;
+          if (!a.isFavorite && b.isFavorite) return 1;
+          return a.name.compareTo(b.name);
+        });
+        
+        _filteredContacts = allFilteredContacts;
       });
-
+      
+      // Show feedback
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               updatedContact.isFavorite 
-                  ? '${contact.name} added to favorites'
-                  : '${contact.name} removed from favorites'
+                ? '${contact.name} added to favorites'
+                : '${contact.name} removed from favorites',
             ),
             duration: const Duration(seconds: 2),
           ),
@@ -135,7 +148,10 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error updating favorite: $e')),
+          SnackBar(
+            content: Text('Error updating favorite: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }

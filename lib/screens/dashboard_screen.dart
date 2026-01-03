@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart' as fc;
 import 'package:url_launcher/url_launcher.dart';
@@ -6,10 +7,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/contact.dart';
 import '../services/contact_service.dart';
 import '../services/database_helper.dart';
+import '../services/notification_service.dart';
 import 'contacts_screen.dart';
 import 'progress_screen.dart';
-import 'settings_screen.dart';
 import 'favorites_screen.dart';
+import 'settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -22,9 +24,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     with TickerProviderStateMixin {
   final ContactService _contactService = ContactService();
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
+  final NotificationService _notificationService = NotificationService();
   
   Contact? _currentContact;
   bool _isLoading = false;
+  bool _disposed = false; // Add disposed flag
   int _activeContactCount = 0;
   int _totalCallsCount = 0;
   int _currentStreak = 0;
@@ -40,6 +44,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   int _frequencyCurrentCalls = 0;
   int _frequencyRemainingCalls = 0;
   
+  // Debounce timer to prevent rapid updates
+  Timer? _debounceTimer;
+  
   // FAB state
   bool _isFabExpanded = false;
   AnimationController? _fabAnimationController;
@@ -51,23 +58,77 @@ class _DashboardScreenState extends State<DashboardScreen>
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
-    _loadData();
+    
+    // Add a small delay to ensure settings are loaded after onboarding
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted && !_disposed) {
+          _loadData();
+        }
+      });
+    });
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _debounceTimer?.cancel();
     _fabAnimationController?.dispose();
     super.dispose();
   }
 
+  void _setStateIfMounted(VoidCallback fn) {
+    if (!_disposed && mounted) {
+      setState(fn);
+    }
+  }
+
+  Future<void> _refreshData() async {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!_disposed && mounted) {
+        _loadData();
+      }
+    });
+  }
+
+  Future<void> _scheduleNotificationsSafely() async {
+    if (_disposed || !mounted) return;
+    
+    try {
+      // Add delay to prevent blocking main thread during app startup
+      await Future.delayed(const Duration(milliseconds: 1000));
+      
+      if (_disposed || !mounted) return;
+      
+      // Schedule notifications with small delays between them
+      await _notificationService.scheduleDueCallNotifications();
+      
+      if (_disposed || !mounted) return;
+      
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      if (_disposed || !mounted) return;
+      
+      await _notificationService.scheduleFrequencyReminders();
+    } catch (e) {
+      // Silent error handling for production
+    }
+  }
+
   Future<void> _loadData() async {
-    setState(() {
+    _setStateIfMounted(() {
       _isLoading = true;
     });
 
     try {
-      final activeCount = await _contactService.getActiveContactCount();
-      final totalCalls = await _contactService.getTotalCallsCount();
+      // Get frequency goal progress
+      final frequencyProgress = await _contactService.getFrequencyGoalProgress();
+      
+      // Get all contacts
+      final allContacts = await _dbHelper.readAllContacts();
+      final activeCount = allContacts.where((c) => c.isActive).length;
+      final totalCalls = await _dbHelper.getTotalCallsCount();
       final frequencyString = await _dbHelper.getSetting('call_frequency');
       final frequency = CallFrequency.values.firstWhere(
         (f) => f.name == frequencyString,
@@ -76,11 +137,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       final currentStreak = await _contactService.getCurrentStreak();
       final favoriteContacts = await _contactService.getFavoriteContacts();
       final dueFavoriteContacts = await _contactService.getContactsDueForCall();
-      
-      // Get frequency goal progress
-      final frequencyProgress = await _contactService.getFrequencyGoalProgress();
-      
-      setState(() {
+
+      _setStateIfMounted(() {
         _activeContactCount = activeCount;
         _totalCallsCount = totalCalls;
         _currentStreak = currentStreak;
@@ -96,8 +154,15 @@ class _DashboardScreenState extends State<DashboardScreen>
         
         _isLoading = false;
       });
+
+      // Schedule notifications in a separate microtask to avoid lifecycle issues
+      if (!_disposed && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scheduleNotificationsSafely();
+        });
+      }
     } catch (e) {
-      setState(() {
+      _setStateIfMounted(() {
         _isLoading = false;
       });
       if (mounted) {
@@ -189,6 +254,128 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.white.withOpacity(0.3),
+                    Colors.white.withOpacity(0.1),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.2),
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.phone_in_talk,
+                    color: Colors.white,
+                    size: 20,
+                    shadows: [
+                      Shadow(
+                        color: Colors.black.withOpacity(0.2),
+                        offset: const Offset(0, 1),
+                        blurRadius: 2,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 4),
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade300,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.green.shade300,
+                          blurRadius: 4,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'dashDial',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    fontSize: 18,
+                    letterSpacing: 1.2,
+                    shadows: [
+                      Shadow(
+                        color: Colors.black.withOpacity(0.2),
+                        offset: const Offset(0, 1),
+                        blurRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  'Stay in Touch! on purpose',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.white.withOpacity(0.8),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          Container(
+            margin: const EdgeInsets.only(right: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.2),
+                width: 1,
+              ),
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () {
+                _refreshData();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Refreshing data...')),
+                );
+              },
+              tooltip: 'Refresh',
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -210,13 +397,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
                   child: Column(
                     children: [
-                      // App Header with Logo (moved to top)
-                      _buildAppHeader(),
-                      const SizedBox(height: 24),
-                      
                       // Frequency Progress Card
                       _buildFrequencyGoalCard(),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
                       
                       // Priority Circle Section
                       if (_dueFavoriteContacts.isNotEmpty) ...[
@@ -292,76 +475,6 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                   ),
                 ],
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAppHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        // App Logo (smaller)
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.orange.shade200,
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.asset(
-              'assets/images/app_logo.png',
-              width: 40,
-              height: 40,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                // Fallback if image fails to load
-                return Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade600,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.phone_in_talk,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        
-        // App Name (smaller)
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'DashDial',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade800,
-              ),
-            ),
-            Text(
-              'Stay Connected',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey.shade600,
-                fontWeight: FontWeight.w500,
               ),
             ),
           ],
@@ -871,6 +984,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   void _showDueFavoritesDialog() {
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -908,6 +1022,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   void _showFavoritesDialog() {
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1137,12 +1252,12 @@ class _DashboardScreenState extends State<DashboardScreen>
           color: Theme.of(context).primaryColor,
           onPressed: () {
             _fabAnimationController?.reverse();
-            setState(() {
+            _setStateIfMounted(() {
               _isFabExpanded = false;
             });
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const ContactsScreen()),
+              MaterialPageRoute(builder: (context) => ContactsScreen()),
             );
           },
         ),
@@ -1154,12 +1269,12 @@ class _DashboardScreenState extends State<DashboardScreen>
           color: Colors.orange.shade600,
           onPressed: () {
             _fabAnimationController?.reverse();
-            setState(() {
+            _setStateIfMounted(() {
               _isFabExpanded = false;
             });
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const FavoritesScreen()),
+              MaterialPageRoute(builder: (context) => FavoritesScreen()),
             );
           },
         ),
@@ -1171,12 +1286,12 @@ class _DashboardScreenState extends State<DashboardScreen>
           color: Colors.green.shade600,
           onPressed: () {
             _fabAnimationController?.reverse();
-            setState(() {
+            _setStateIfMounted(() {
               _isFabExpanded = false;
             });
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const ProgressScreen()),
+              MaterialPageRoute(builder: (context) => ProgressScreen()),
             );
           },
         ),
@@ -1188,12 +1303,12 @@ class _DashboardScreenState extends State<DashboardScreen>
           color: Colors.grey.shade600,
           onPressed: () {
             _fabAnimationController?.reverse();
-            setState(() {
+            _setStateIfMounted(() {
               _isFabExpanded = false;
             });
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              MaterialPageRoute(builder: (context) => SettingsScreen()),
             );
           },
         ),
@@ -1202,14 +1317,14 @@ class _DashboardScreenState extends State<DashboardScreen>
         const SizedBox(height: 16),
         FloatingActionButton(
           onPressed: () {
-            setState(() {
+            _setStateIfMounted(() {
               _isFabExpanded = !_isFabExpanded;
-              if (_isFabExpanded) {
-                _fabAnimationController?.forward();
-              } else {
-                _fabAnimationController?.reverse();
-              }
             });
+            if (_isFabExpanded) {
+              _fabAnimationController?.forward();
+            } else {
+              _fabAnimationController?.reverse();
+            }
           },
           backgroundColor: Colors.orange.shade600,
           child: AnimatedIcon(

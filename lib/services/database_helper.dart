@@ -114,7 +114,7 @@ class DatabaseHelper {
     await db.insert('achievements', {
       'achievement_type': 'first_call',
       'title': 'First Connection',
-      'description': 'Made your first call through Dash Dial',
+      'description': 'Made your first call through dashDial',
       'is_unlocked': 0,
     });
 
@@ -661,7 +661,13 @@ class DatabaseHelper {
     return contactsWithScores.first.key;
   }
 
-  Future close() async {
+  Future<int> getTotalCallsCount() async {
+    final db = await instance.database;
+    final result = await db.rawQuery('SELECT SUM(call_count) as total FROM contacts');
+    return result.first['total'] as int? ?? 0;
+  }
+
+  Future<void> close() async {
     final db = await instance.database;
     db.close();
   }

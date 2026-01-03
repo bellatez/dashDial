@@ -1,20 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:timezone/data/latest.dart' as tzl;
+import 'package:timezone/timezone.dart' as tz;
+import 'services/database_helper.dart';
+import 'services/notification_service.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/onboarding_screen.dart';
-import 'services/database_helper.dart';
+import 'screens/splash_screen.dart';
 
 void main() {
-  runApp(const DashDialApp());
+  runApp(const DashdialApp());
 }
 
-class DashDialApp extends StatelessWidget {
-  const DashDialApp({super.key});
+class DashdialApp extends StatelessWidget {
+  const DashdialApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Dash Dial',
+      title: 'dashDial',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF2196F3),
@@ -40,7 +44,10 @@ class DashDialApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const AppLauncher(),
+      home: const SplashScreen(),
+      routes: {
+        '/main': (context) => const AppLauncher(),
+      },
     );
   }
 }
@@ -53,42 +60,65 @@ class AppLauncher extends StatefulWidget {
 }
 
 class _AppLauncherState extends State<AppLauncher> {
-  final DatabaseHelper _dbHelper = DatabaseHelper.instance;
-  bool _isLoading = true;
-  bool _showOnboarding = false;
-
   @override
   void initState() {
     super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    tzl.initializeTimeZones();
+    await DatabaseHelper.instance.database;
+    await NotificationService().initialize();
+    
     _checkFirstLaunch();
   }
 
   Future<void> _checkFirstLaunch() async {
-    try {
-      final onboardingComplete = await _dbHelper.getSetting('onboarding_complete');
-      
-      setState(() {
-        _isLoading = false;
-        _showOnboarding = onboardingComplete != 'true';
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _showOnboarding = true; // Default to onboarding if there's an error
-      });
+    final onboardingComplete = await DatabaseHelper.instance.getSetting('onboarding_complete');
+    
+    if (onboardingComplete == 'true') {
+      _navigateToHome();
+    } else {
+      _navigateToOnboarding();
+    }
+  }
+
+  void _navigateToHome() {
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const DashboardScreen()),
+      );
+    }
+  }
+
+  void _navigateToOnboarding() {
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const OnboardingScreen()),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
+    // Show a loading screen while initializing
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Loading...',
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+          ],
         ),
-      );
-    }
-
-    return _showOnboarding ? const OnboardingScreen() : const DashboardScreen();
+      ),
+    );
   }
 }

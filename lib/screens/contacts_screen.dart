@@ -28,12 +28,15 @@ class _ContactsScreenState extends State<ContactsScreen> {
     });
 
     try {
-      final contacts = _showActiveOnly 
+      final allContacts = _showActiveOnly 
           ? await _contactService.getActiveContacts()
           : await _contactService.getLocalContacts();
       
+      // Filter out favorites from the regular contacts list
+      final nonFavoriteContacts = allContacts.where((contact) => !contact.isFavorite).toList();
+      
       setState(() {
-        _contacts = contacts;
+        _contacts = nonFavoriteContacts;
         _isLoading = false;
       });
     } catch (e) {
@@ -84,49 +87,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
     final confirmed = await _showDeleteConfirmation(contact);
     if (confirmed == true) {
       await _contactService.deleteContact(contact.id);
-      await _loadContacts();
-    }
-  }
-
-  Future<void> _toggleFavorite(Contact contact) async {
-    await _contactService.toggleFavorite(contact.id, !contact.isFavorite);
-    await _loadContacts();
-  }
-
-  Future<void> _showFrequencyDialog(Contact contact) async {
-    CallFrequency? selectedFrequency = contact.favoriteFrequency;
-    
-    final result = await showDialog<CallFrequency>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Set Frequency for ${contact.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: CallFrequency.values.map((frequency) => RadioListTile<CallFrequency>(
-            title: Text(frequency.displayName),
-            subtitle: Text('Every ${frequency.days} day${frequency.days == 1 ? '' : 's'}'),
-            value: frequency,
-            groupValue: selectedFrequency,
-            onChanged: (value) {
-              selectedFrequency = value;
-            },
-          )).toList(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(selectedFrequency),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result != contact.favoriteFrequency) {
-      await _contactService.updateFavoriteFrequency(contact.id, result);
       await _loadContacts();
     }
   }
@@ -239,13 +199,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
         motion: const ScrollMotion(),
         children: [
           SlidableAction(
-            onPressed: (_) => _toggleFavorite(contact),
-            backgroundColor: contact.isFavorite ? Colors.grey : Colors.amber,
-            foregroundColor: Colors.white,
-            icon: contact.isFavorite ? Icons.star_border : Icons.star,
-            label: contact.isFavorite ? 'Unfavorite' : 'Favorite',
-          ),
-          SlidableAction(
             onPressed: (_) => _toggleContactActive(contact),
             backgroundColor: contact.isActive ? Colors.orange : Colors.green,
             foregroundColor: Colors.white,
@@ -266,26 +219,12 @@ class _ContactsScreenState extends State<ContactsScreen> {
           backgroundColor: contact.isActive 
               ? Theme.of(context).colorScheme.primary
               : Colors.grey,
-          child: Stack(
-            children: [
-              Text(
-                contact.name.isNotEmpty ? contact.name[0].toUpperCase() : '?',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (contact.isFavorite)
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Icon(
-                    Icons.star,
-                    color: Colors.amber,
-                    size: 16,
-                  ),
-                ),
-            ],
+          child: Text(
+            contact.name.isNotEmpty ? contact.name[0].toUpperCase() : '?',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
         title: Text(
@@ -310,14 +249,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-            if (contact.isFavorite && contact.favoriteFrequency != null)
-              Text(
-                'Favorite: ${contact.favoriteFrequency!.displayName}',
-                style: TextStyle(
-                  color: Colors.amber,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
           ],
         ),
         trailing: Column(
@@ -332,12 +263,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
               'calls',
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            if (contact.isFavorite)
-              IconButton(
-                icon: const Icon(Icons.edit, size: 16),
-                onPressed: () => _showFrequencyDialog(contact),
-                tooltip: 'Edit frequency',
-              ),
           ],
         ),
       ),

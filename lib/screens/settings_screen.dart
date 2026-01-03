@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/contact.dart';
 import '../services/database_helper.dart';
+import '../services/notification_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -11,8 +12,10 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
+  final NotificationService _notificationService = NotificationService();
   CallFrequency _frequency = CallFrequency.weekly;
   bool _isLoading = false;
+  bool _notificationsEnabled = false;
   final Map<CallFrequency, TextEditingController> _goalControllers = {};
   
   @override
@@ -48,18 +51,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         orElse: () => CallFrequency.weekly,
       );
 
-      // Load goals for each frequency
+      // Load notification settings
+      final notificationsEnabled = await _dbHelper.getSetting('notifications_enabled') == 'true';
+      
+      // Load frequency goals
       for (final freq in CallFrequency.values) {
         final goalKey = '${freq.name}_goal';
-        final goalValue = await _dbHelper.getSetting(goalKey);
-        final goalNumber = int.tryParse(goalValue);
-        if (goalNumber != null && goalNumber > 0) {
-          _goalControllers[freq]?.text = goalValue;
-        }
+        final goal = await _dbHelper.getSetting(goalKey);
+        _goalControllers[freq]?.text = goal.isNotEmpty ? goal : '5';
       }
 
       setState(() {
         _frequency = frequency;
+        _notificationsEnabled = notificationsEnabled;
         _isLoading = false;
       });
     } catch (e) {
@@ -146,11 +150,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  _buildNotificationSection(),
+                  const SizedBox(height: 24),
                   _buildFrequencySection(),
                   const SizedBox(height: 24),
                   _buildAboutSection(),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildNotificationSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Notifications',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Enable notifications to receive call reminders and due call alerts.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: const Text('Enable Notifications'),
+              subtitle: const Text('Receive call reminders and alerts'),
+              value: _notificationsEnabled,
+              onChanged: (value) async {
+                await _dbHelper.updateSetting('notifications_enabled', value.toString());
+                setState(() {
+                  _notificationsEnabled = value;
+                });
+                
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(value ? 'Notifications enabled' : 'Notifications disabled')),
+                  );
+                }
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -289,7 +337,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'About Dash Dial',
+              'About dashDial',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 16),

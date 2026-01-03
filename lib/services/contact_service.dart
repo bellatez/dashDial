@@ -273,14 +273,17 @@ class ContactService {
   // Frequency goal progress methods
   Future<Map<String, dynamic>> getFrequencyGoalProgress() async {
     final frequencyString = await _dbHelper.getSetting('call_frequency');
+    print('Debug: Loaded frequency setting: $frequencyString');
     final frequency = CallFrequency.values.firstWhere(
       (f) => f.name == frequencyString,
       orElse: () => CallFrequency.weekly,
     );
+    print('Debug: Parsed frequency: ${frequency.name}');
 
     final goalKey = '${frequency.name}_goal';
     final goalValue = await _dbHelper.getSetting(goalKey);
     final goal = int.tryParse(goalValue) ?? 1;
+    print('Debug: Goal key: $goalKey, goal value: $goalValue, parsed goal: $goal');
 
     // Calculate current period calls
     final now = DateTime.now();
